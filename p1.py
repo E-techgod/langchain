@@ -7,7 +7,6 @@ from langchain_groq import ChatGroq
 from langchain.agents import create_agent
 from langchain.tools import ToolRuntime, tool
 from langgraph.checkpoint.memory import MemorySaver 
-from langchain.agents.structured_output import ToolStrategy
 
 class Context(BaseModel):
     user_id : str
