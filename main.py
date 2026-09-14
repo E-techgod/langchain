@@ -22,7 +22,7 @@ class ResponseFortmat:
     temp_f : float
     humidity : float
 
-@tool('locate_user', description= "Look up a user's city based on the context", return_direct= True)
+@tool('locate_user', description= "Look up a user's city based on the context", return_direct= False)
 def locate_user (runtime: ToolRuntime[Context]):
     match runtime.context.user_id:
         case 'ABC123':
@@ -35,7 +35,7 @@ def locate_user (runtime: ToolRuntime[Context]):
             return 'Unknown' 
 
 
-@tool("get_weather", description="Return current weather summary for a given city", return_direct= True)
+@tool("get_weather", description="Return current weather summary for a given city", return_direct= True) # Default is set to False
 def get_weather(city: str) -> dict:
     url = f"https://wttr.in/{city}?format=j1"
     data = requests.get(url, timeout=10).json()
