@@ -1,41 +1,36 @@
-from dataclasses import dataclass
+from pydantic import BaseModel
 
 import os
 import requests
 from dotenv import load_dotenv
-
-from langchain.tools import ToolRuntime, tool
 from langchain_groq import ChatGroq
 from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
-from langgraph.checkpoint.memory import InMemorySaver
+from langchain.tools import ToolRuntime, tool
+from langgraph.checkpoint.memory import MemorySaver 
+from langchain.agents.structured_output import ToolStrategy
 
-
-@dataclass
-class Context:
+class Context(BaseModel):
     user_id : str
 
-@dataclass
-class ResponseFortmat: 
+class ResponseFormat(BaseModel): 
     summary : str
     temp_c : float
     temp_f : float
     humidity : float
 
-@tool('locate_user', description= "Look up a user's city based on the context", return_direct= False)
-def locate_user (runtime: ToolRuntime[Context]):
+@tool("locate_user", description="Look up user's city from context")
+def locate_user(runtime: ToolRuntime[Context]) -> str:
     match runtime.context.user_id:
-        case 'ABC123':
-            return 'Vienna'
-        case 'XYZ456':
-            return 'London'
-        case 'HJKL789':
+        case "ABC123":
+            return "Vienna"
+        case "XYZ456":
+            return "London"
+        case 'DEFG123':
             return 'Paris'
         case _:
-            return 'Unknown' 
+            return 'Unknow' 
 
-
-@tool("get_weather", description="Return current weather summary for a given city", return_direct= True) # Default is set to False
+@tool("get_weather", description="Return current weather summary for a given city", return_direct= False) # Default is set to False
 def get_weather(city: str) -> dict:
     url = f"https://wttr.in/{city}?format=j1"
     data = requests.get(url, timeout=10).json()
@@ -49,11 +44,11 @@ def get_weather(city: str) -> dict:
 
     return {
         "city": city,
-        "temp_c": current.get("temp_C"),
-        "temp_f": current.get("temp_F"),
+        "temp_c": float(current.get("temp_C")),
+        "temp_f": float(current.get("temp_F")),
         "condition": weather_desc,
-        "humidity_pct": current.get("humidity"),
-        "wind_mph": current.get("windspeedMiles"),
+        "humidity": float(current.get("humidity")),
+        "wind_mph": float(current.get("windspeedMiles")),
     }
 
 load_dotenv()
@@ -64,17 +59,44 @@ llm = ChatGroq(
     groq_api_key = os.getenv("GROQ_API_KEY"),
 )
 
+checkpointer = MemorySaver()
+
 agent = create_agent(
     model = llm,
-    tools = [get_weather],
-    system_prompt = 'You are a helpful weather assistant'
+    tools = [get_weather, locate_user],
+    system_prompt = 'You are a helpful weather assistant',
+    context_schema = Context,
+    checkpointer = checkpointer
 )
 
-response = agent.invoke({
-    'messages' : [
-        {'role' : 'user', 'content' : "What is the weather in Vienna?"}
-    ]
-})
+config = {
+    'configurable' : {'thread_id' : 1}
+}
 
-print(response)
-print(response['messages'][-1].content)
+response = agent.invoke(
+    {
+        "messages": [
+            {"role": "user", "content": "What is the weather like?"}
+        ]
+    },
+    config=config,
+    context=Context(user_id="DEFG123"),
+)
+
+print(response["messages"][-1].content)
+
+config = {
+    'configurable' : {'thread_id' : 1}
+}
+
+response = agent.invoke(
+    {
+        "messages": [
+            {"role": "user", "content": "Amd is this usual?"}
+        ]
+    },
+    config=config,
+    context=Context(user_id="DEFG123"),
+)
+
+print(response["messages"][-1].content)
