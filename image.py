@@ -3,20 +3,23 @@ import json
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableLambda
 from langchain_groq import ChatGroq
+from guardrails import Guard
 
 from promotion_schema import Promotion
+from llm import llm
 
-load_dotenv()
-
-llm = ChatGroq(
-    model="qwen/qwen3.6-27b",
+structured_llm = llm.with_structured_output(Promotion)
+lcel_fallback_llm = ChatGroq(
+    model="openai/gpt-oss-20b",
     temperature=0.0,
     groq_api_key=os.getenv("GROQ_API_KEY"),
 )
-structured_llm = llm.with_structured_output(Promotion)
+lcel_fallback = RunnableLambda(lambda message: [message]) | lcel_fallback_llm | StrOutputParser()
+promotion_guard = Guard.for_pydantic(output_class=Promotion)
 
 image_directory = Path(__file__).resolve().parent / "promos"
 processed_file = Path(__file__).resolve().parent / "processed_images.txt"
@@ -35,6 +38,41 @@ promotion_results = (
 unprocessed_paths = [
     image_path for image_path in image_paths if image_path.name not in processed_images
 ]
+
+
+def parse_json_response(raw_response: str) -> Promotion:
+    cleaned = raw_response.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    return Promotion.model_validate_json(cleaned.strip())
+
+
+def validate_with_guardrails(promotion: Promotion) -> Promotion:
+    validation = promotion_guard.validate(promotion.model_dump_json())
+    if not validation.validation_passed:
+        raise ValueError("Guardrails rejected the extracted promotion")
+    return Promotion.model_validate(validation.validated_output)
+
+
+def extract_promotion(message: HumanMessage) -> Promotion:
+    try:
+        response = structured_llm.invoke([message])
+        return validate_with_guardrails(response)
+    except Exception as structured_error:
+        print(f"Structured extraction failed; trying LCEL fallback: {structured_error}")
+
+    try:
+        raw_response = lcel_fallback.invoke(message)
+        promotion = parse_json_response(raw_response)
+        return validate_with_guardrails(promotion)
+    except Exception as lcel_error:
+        raise RuntimeError(
+            "Both structured extraction and the LCEL/Guardrails fallback failed"
+        ) from lcel_error
 
 if not image_paths:
     print(f"No .jpeg files found in {image_directory}")
@@ -61,7 +99,7 @@ for image_path in unprocessed_paths:
         ]
     )
 
-    response = structured_llm.invoke([message])
+    response = extract_promotion(message)
     print(f"\n--- {image_path.name} ---")
     print(response.model_dump_json(indent=2))
 

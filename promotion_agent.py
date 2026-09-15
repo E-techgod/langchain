@@ -78,17 +78,25 @@ def top_relevance_score(store: PostgresStore, query: str) -> float | None:
     return matches[0].score if matches else None
 
 
-template = """"You are a promotion assistant. Before answering any question about 
+template = """You are a promotion assistant. Before answering any question about 
             promotions, always call search_promotions with a concise semantic 
             query. Ground the answer only in the returned promotion memories. 
-            Include relevant dates and restrictions. Give a concise answer, with no more than 5 bullet points. 
-            Straightforwardly say if no matching promotion was found. Do not make up any information.
-            If the search does not contain the answer, say "I cannot answer this, due to unrelated query"
+            Include relevant dates and restrictions. Give a concise answer, keep it simple. 
 
 Context:
 {context}
 
 Question:
+{question}
+"""
+
+relevance_template = """Determine whether the promotion context is relevant to the user question.
+Return only YES or NO.
+
+Promotion context:
+{context}
+
+User question:
 {question}
 """
 
@@ -104,22 +112,31 @@ def retrieve_promotions(store: PostgresStore, query: str) -> list[dict[str, Any]
     ]
 
 
-def build_chain(store: PostgresStore):
-    model = ChatGroq(
-        model=os.getenv("PROMOTION_AGENT_MODEL", "openai/gpt-oss-120b"),
+def build_chains(store: PostgresStore):
+    relevance_model = ChatGroq(
+        model="openai/gpt-oss-20b",
         temperature=0.0,
         groq_api_key=required_env("GROQ_API_KEY"),
     )
-    prompt = ChatPromptTemplate.from_template(template.replace(
+    answer_model = ChatGroq(
+        model=os.getenv("PROMOTION_ANSWER_MODEL", "qwen/qwen3.6-27b"),
+        temperature=0.0,
+        groq_api_key=required_env("GROQ_API_KEY"),
+    )
+    answer_prompt = ChatPromptTemplate.from_template(template.replace(
         "Before answering promotion queries, call `search_promotions` with a concise semantic query. ",
         "",
     ))
-    return RunnableLambda(
+    relevance_prompt = ChatPromptTemplate.from_template(relevance_template)
+    context_and_question = RunnableLambda(
         lambda question: {
             "context": json.dumps(retrieve_promotions(store, question), ensure_ascii=False),
             "question": question,
         }
-    ) | prompt | model | StrOutputParser()
+    )
+    relevance_chain = context_and_question | relevance_prompt | relevance_model | StrOutputParser()
+    answer_chain = context_and_question | answer_prompt | answer_model | StrOutputParser()
+    return relevance_chain, answer_chain
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -158,7 +175,7 @@ def main() -> None:
         if args.sync_only:
             return
 
-        chain = build_chain(store)
+        relevance_chain, answer_chain = build_chains(store)
 
         print("Ask about promotions. Type `exit` to stop.")
         while True:
@@ -180,7 +197,13 @@ def main() -> None:
                 print("Agent: I cannot answer this based on the available information.")
                 continue
 
-            response = chain.invoke(question)
+            relevance = relevance_chain.invoke(question).strip().upper()
+            print(f"OSS relevance check: {relevance}")
+            if not relevance.startswith("YES"):
+                print("Agent: I cannot answer this based on the available information.")
+                continue
+
+            response = answer_chain.invoke(question)
             print(f"Agent: {response}")
 
 
