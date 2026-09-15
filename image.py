@@ -86,10 +86,10 @@ for image_path in unprocessed_paths:
             **response.model_dump(),
         }
     )
-    results_file.write_text(
-        json.dumps(promotion_results, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    # Python—not the LLM—serializes the validated results and writes the file.
+    with results_file.open("w", encoding="utf-8") as file:
+        json.dump(promotion_results, file, indent=2, ensure_ascii=False)
+        file.write("\n")
 
     with processed_file.open("a", encoding="utf-8") as file:
         file.write(f"{image_path.name}\n")
