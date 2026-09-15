@@ -33,6 +33,10 @@ def required_env(name: str) -> str:
     return value
 
 
+def relevance_threshold() -> float:
+    return float(os.getenv("PROMOTION_RELEVANCE_THRESHOLD", "0.35"))
+
+
 def searchable_text(promotion: PromotionMemory) -> str:
     restrictions = promotion.Restrictions or ["None listed"]
     promotion_info = (
@@ -70,6 +74,11 @@ def sync_promotion_memories(store: PostgresStore) -> int:
     return len(raw_results)
 
 
+def has_relevant_promotion(store: PostgresStore, query: str) -> bool:
+    matches = store.search(PROMOTION_NAMESPACE, query=query, limit=1)
+    return bool(matches and matches[0].score is not None and matches[0].score >= relevance_threshold())
+
+
 @tool
 def search_promotions(query: str, runtime: ToolRuntime) -> str:
     """Search saved promotions by meaning, benefit, provider, date, or restriction."""
@@ -78,6 +87,11 @@ def search_promotions(query: str, runtime: ToolRuntime) -> str:
         query=query,
         limit=5,
     )
+    matches = [
+        match
+        for match in matches
+        if match.score is not None and match.score >= relevance_threshold()
+    ]
     results = [
         {
             "score": match.score,
@@ -167,6 +181,10 @@ def main() -> None:
             if question.lower() in {"exit", "quit"}:
                 break
             if not question:
+                continue
+
+            if not has_relevant_promotion(store, question):
+                print("Agent: I cannot answer this based on the available information.")
                 continue
 
             response = agent.invoke(
