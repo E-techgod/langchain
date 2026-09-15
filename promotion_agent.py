@@ -4,9 +4,11 @@ import json
 import os
 import re
 from datetime import date
+from functools import cache
 from pathlib import Path
 from typing import Any
 
+import torch
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -14,6 +16,7 @@ from langgraph.store.postgres import PostgresStore
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from promotion_schema import Promotion
 
@@ -22,6 +25,7 @@ BASE_DIR = Path(__file__).resolve().parent
 RESULTS_FILE = BASE_DIR / "promotion_results.json"
 PROMOTION_NAMESPACE = ("promotions",)
 EMBEDDING_DIMENSIONS = 768
+GUARD_MODEL_ID = "meta-llama/Prompt-Guard-86M"
 
 
 class PromotionMemory(Promotion):
@@ -29,11 +33,50 @@ class PromotionMemory(Promotion):
     Promo_info: str | list[str]
 
 
+@cache
+def prompt_guard_components():
+    tokenizer = AutoTokenizer.from_pretrained(GUARD_MODEL_ID)
+    guard_model = AutoModelForSequenceClassification.from_pretrained(GUARD_MODEL_ID)
+    guard_model.eval()
+    return tokenizer, guard_model
+
+
+def check_prompt_injection(text: str) -> tuple[str, float]:
+    """Classify input as BENIGN, INJECTION, or JAILBREAK."""
+    tokenizer, guard_model = prompt_guard_components()
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+    with torch.no_grad():
+        outputs = guard_model(**inputs)
+
+    probabilities = torch.softmax(outputs.logits, dim=-1)[0]
+    predicted_index = int(torch.argmax(probabilities).item())
+    configured_labels = getattr(guard_model.config, "id2label", {})
+    label = configured_labels.get(predicted_index, "").upper()
+    if not label or label.startswith("LABEL_"):
+        fallback_labels = ["BENIGN", "INJECTION", "JAILBREAK"]
+        label = (
+            fallback_labels[predicted_index]
+            if predicted_index < len(fallback_labels)
+            else "UNKNOWN"
+        )
+    return label, float(probabilities[predicted_index].item())
+
+
 def required_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def use_prompt_guard() -> bool:
+    return os.getenv("USE_GUARD", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
 
 ################## Handling relevance threshold and searchable text for promotions ##################
 def relevance_threshold() -> float:
@@ -45,6 +88,14 @@ def searchable_text(promotion: PromotionMemory) -> str:
         promotion.Promo_info
         if isinstance(promotion.Promo_info, str)
         else "; ".join(promotion.Promo_info)
+    )
+    return "\n".join(
+        [
+            f"Insurance provider: {promotion.Insurance_Provided}",
+            f"Promotion date: {promotion.Promo_date}",
+            f"Promotion information: {promotion_info}",
+            f"Restrictions: {'; '.join(restrictions)}",
+        ]
     )
 
 
@@ -89,14 +140,6 @@ def promotion_end_date(value: str) -> date | None:
 
 def live_filter() -> dict[str, dict[str, str]]:
     return {"validation_date": {"$gte": date.today().isoformat()}}
-    return "\n".join(
-        [
-            f"Insurance provider: {promotion.Insurance_Provided}",
-            f"Promotion date: {promotion.Promo_date}",
-            f"Promotion information: {promotion_info}",
-            f"Restrictions: {'; '.join(restrictions)}",
-        ]
-    )
 
 
 def sync_promotion_memories(store: PostgresStore) -> int:
@@ -114,7 +157,7 @@ def sync_promotion_memories(store: PostgresStore) -> int:
         promotion = PromotionMemory.model_validate(raw_promotion)
         memory = promotion.model_dump()
         end_date = promotion_end_date(promotion.Promo_date)
-        memory["validation_date"] = end_date.isoformat() if end_date else None
+        memory["validation_date"] = end_date.isoformat() if end_date else "9999-12-31"
         memory["text"] = searchable_text(promotion)
         store.put(PROMOTION_NAMESPACE, promotion.filename, memory)
 
@@ -234,6 +277,8 @@ def main() -> None:
             return
 
         relevance_chain, answer_chain = build_chains(store)
+        guard_enabled = use_prompt_guard()
+        print(f"Prompt Guard enabled: {guard_enabled}")
 
         print("Ask about promotions. Type `exit` to stop.")
         while True:
@@ -247,6 +292,15 @@ def main() -> None:
                 break
             if not question:
                 continue
+
+            if guard_enabled:
+                guard_label, guard_score = check_prompt_injection(question)
+                print(f"Prompt Guard: {guard_label} ({guard_score:.3f})")
+                if guard_label in {"INJECTION", "JAILBREAK"}:
+                    print("Agent: I cannot process that prompt.")
+                    continue
+            else:
+                print("Prompt Guard: skipped")
 
             score = top_relevance_score(store, question)
             print(f"Similarity score: {score if score is not None else 'no match'}")
