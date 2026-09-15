@@ -3,3 +3,4 @@
 promos/
 __pycache__/
 *.jpeg
+processed_images.txt
