@@ -16,7 +16,7 @@ class Promotion(BaseModel):
     Promo_date: str = Field(
         description="The promotion date or date range exactly as shown."
     )
-    Promo_info: str = Field(
+    Promo_info: list[str] = Field(
         description="A short description of the promotion or offer."
     )
     Restrictions: list[str] | None = Field(
