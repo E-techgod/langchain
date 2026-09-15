@@ -1,6 +1,9 @@
 import argparse
+import calendar
 import json
 import os
+import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +46,49 @@ def searchable_text(promotion: PromotionMemory) -> str:
         if isinstance(promotion.Promo_info, str)
         else "; ".join(promotion.Promo_info)
     )
+
+
+SPANISH_MONTHS = {
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "setiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
+
+
+def promotion_end_date(value: str) -> date | None:
+    normalized = value.lower().strip()
+    match = re.search(
+        r"(?:del?\s+)?(?:\d{1,2}\s+al\s+)?(\d{1,2})\s+de\s+([a-z]+)\s+de\s+(\d{4})",
+        normalized,
+    )
+    if match:
+        day, month_name, year = match.groups()
+        month = SPANISH_MONTHS.get(month_name)
+        if month:
+            return date(int(year), month, int(day))
+
+    month_match = re.search(r"([a-z]+)\s+(\d{4})", normalized)
+    if month_match:
+        month = SPANISH_MONTHS.get(month_match.group(1))
+        if month:
+            year = int(month_match.group(2))
+            return date(year, month, calendar.monthrange(year, month)[1])
+
+    return None
+
+
+def live_filter() -> dict[str, dict[str, str]]:
+    return {"validation_date": {"$gte": date.today().isoformat()}}
     return "\n".join(
         [
             f"Insurance provider: {promotion.Insurance_Provided}",
@@ -67,6 +113,8 @@ def sync_promotion_memories(store: PostgresStore) -> int:
     for raw_promotion in raw_results:
         promotion = PromotionMemory.model_validate(raw_promotion)
         memory = promotion.model_dump()
+        end_date = promotion_end_date(promotion.Promo_date)
+        memory["validation_date"] = end_date.isoformat() if end_date else None
         memory["text"] = searchable_text(promotion)
         store.put(PROMOTION_NAMESPACE, promotion.filename, memory)
 
@@ -74,7 +122,12 @@ def sync_promotion_memories(store: PostgresStore) -> int:
 
 
 def top_relevance_score(store: PostgresStore, query: str) -> float | None:
-    matches = store.search(PROMOTION_NAMESPACE, query=query, limit=1)
+    matches = store.search(
+        PROMOTION_NAMESPACE,
+        query=query,
+        filter=live_filter(),
+        limit=1,
+    )
     return matches[0].score if matches else None
 
 
@@ -101,7 +154,12 @@ User question:
 """
 
 def retrieve_promotions(store: PostgresStore, query: str) -> list[dict[str, Any]]:
-    matches = store.search(PROMOTION_NAMESPACE, query=query, limit=5)
+    matches = store.search(
+        PROMOTION_NAMESPACE,
+        query=query,
+        filter=live_filter(),
+        limit=50,
+    )
     return [
         {
             "score": match.score,
@@ -119,7 +177,7 @@ def build_chains(store: PostgresStore):
         groq_api_key=required_env("GROQ_API_KEY"),
     )
     answer_model = ChatGroq(
-        model=os.getenv("PROMOTION_ANSWER_MODEL", "qwen/qwen3.6-27b"),
+        model=os.getenv("PROMOTION_ANSWER_MODEL", "openai/gpt-oss-120b"),
         temperature=0.0,
         groq_api_key=required_env("GROQ_API_KEY"),
     )
