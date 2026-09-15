@@ -5,6 +5,23 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from langchain_groq import ChatGroq
+from pydantic import BaseModel, Field
+
+
+class Promotion(BaseModel):
+    Insurance_Provided: str = Field(
+        description="The insurance provider named in the promotion."
+    )
+    Promo_date: str = Field(
+        description="The promotion date or date range exactly as shown."
+    )
+    Promo_info: str = Field(
+        description="A short description of the promotion or offer."
+    )
+    Restrictions: list[str] | None = Field(
+        default=None,
+        description="Any restrictions, exclusions, or conditions shown.",
+    )
 
 load_dotenv()
 
@@ -13,6 +30,7 @@ llm = ChatGroq(
     temperature=0.0,
     groq_api_key=os.getenv("GROQ_API_KEY"),
 )
+structured_llm = llm.with_structured_output(Promotion)
 
 image_directory = Path(__file__).resolve().parent / "promos"
 processed_file = Path(__file__).resolve().parent / "processed_images.txt"
@@ -39,9 +57,9 @@ for image_path in unprocessed_paths:
             {
                 "type": "text",
                 "text": (
-                    "Describe the contents of this image in 3 bullet points, "
-                    "using only the information mentioned inside it. Do not "
-                    "describe the design. Only describe the promotion."
+                    "Extract the promotion details using only information "
+                    "visible in the image. Do not describe the design. If no "
+                    "restrictions are shown, return null for Restrictions."
                 ),
             },
             {
@@ -51,9 +69,9 @@ for image_path in unprocessed_paths:
         ]
     )
 
-    response = llm.invoke([message])
+    response = structured_llm.invoke([message])
     print(f"\n--- {image_path.name} ---")
-    print(response.content)
+    print(response.model_dump_json(indent=2))
 
     with processed_file.open("a", encoding="utf-8") as file:
         file.write(f"{image_path.name}\n")
