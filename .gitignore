@@ -2,4 +2,4 @@
 .env
 promos/
 __pycache__/
-.jpeg
+*.jpeg
