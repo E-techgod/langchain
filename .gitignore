@@ -5,3 +5,4 @@ __pycache__/
 *.jpeg
 processed_images.txt
 sche/
+*.json
