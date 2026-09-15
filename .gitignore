@@ -1,8 +1,26 @@
-.venv/
+# Environment and secrets
 .env
-promos/
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Python caches and tooling
 __pycache__/
-*.jpeg
-processed_images.txt
-sche/
-*.json
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated promotion inputs, state, and results
+/promos/
+/processed_images.txt
+/promotion_results.json
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
