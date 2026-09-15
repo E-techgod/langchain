@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 from pathlib import Path
 
@@ -34,11 +35,17 @@ structured_llm = llm.with_structured_output(Promotion)
 
 image_directory = Path(__file__).resolve().parent / "promos"
 processed_file = Path(__file__).resolve().parent / "processed_images.txt"
+results_file = Path(__file__).resolve().parent / "promotion_results.json"
 image_paths = sorted(image_directory.glob("*.jpeg"))
 processed_images = (
     set(processed_file.read_text(encoding="utf-8").splitlines())
     if processed_file.exists()
     else set()
+)
+promotion_results = (
+    json.loads(results_file.read_text(encoding="utf-8"))
+    if results_file.exists()
+    else []
 )
 unprocessed_paths = [
     image_path for image_path in image_paths if image_path.name not in processed_images
@@ -72,6 +79,17 @@ for image_path in unprocessed_paths:
     response = structured_llm.invoke([message])
     print(f"\n--- {image_path.name} ---")
     print(response.model_dump_json(indent=2))
+
+    promotion_results.append(
+        {
+            "filename": image_path.name,
+            **response.model_dump(),
+        }
+    )
+    results_file.write_text(
+        json.dumps(promotion_results, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
     with processed_file.open("a", encoding="utf-8") as file:
         file.write(f"{image_path.name}\n")
