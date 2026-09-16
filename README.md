@@ -1,14 +1,17 @@
-# Promotion extraction and semantic-memory agent
+# Promotion Agents
 
-`image.py` extracts structured promotion data from JPEG files in `promos/` and
-writes it to `promotion_results.json`. `promotion_agent.py` validates those
-results, upserts them into a LangGraph PostgreSQL store with a pgvector index,
-and provides a retrieval tool to a Groq-powered agent.
+This project extracts promotion details from images, stores them in PostgreSQL
+with pgvector, and answers promotion questions with a guarded retrieval flow.
 
 ## Setup
 
-Copy `.env.example` to `.env` and provide your Groq and OpenAI API keys. Groq
-powers chat and OpenAI creates the embeddings used for semantic search.
+Install dependencies and copy `.env.example` to `.env`:
+
+```bash
+uv sync
+```
+
+Configure the API keys and database URL in `.env`. Do not commit `.env`.
 
 Start PostgreSQL with the pgvector extension:
 
@@ -24,16 +27,64 @@ uv run promotion_agent.py --sync-only
 uv run promotion_agent.py
 ```
 
-The agent uses two persistent memory mechanisms:
+`image.py` validates extracted promotions with the `Promotion` schema and
+Guardrails before writing `promotion_results.json`. Its primary model is
+Groq-backed structured output, with an LCEL fallback model if extraction fails.
+
+The promotion agent flow is:
+
+1. Prompt Guard checks for prompt injection and jailbreaks.
+2. PostgreSQL filters out promotions whose parsed end date is before today.
+  Promotions without a date remain eligible.
+3. pgvector performs semantic search and applies the relevance threshold.
+4. `openai/gpt-oss-20b` checks whether the retrieved context is relevant.
+5. The answer model responds using only the approved promotion context.
+
+The agent uses PostgreSQL for two purposes:
 
 - `PostgresStore` stores promotion facts and retrieves them semantically through
   pgvector.
-- `PostgresSaver` checkpoints each conversation using `--thread-id`. Reusing a
-  thread ID resumes that conversation; using a new ID starts a new conversation.
 
 Every agent startup resynchronizes `promotion_results.json`. The source filename
-is used as the memory key, so an updated record replaces the prior record instead
-of creating a duplicate.
+is used as the memory key, so an updated record replaces the prior record.
+
+Relevant `.env` options include:
+
+```env
+GROQ_API_KEY=your-groq-api-key
+GEMINI_API_KEY=your-gemini-api-key
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/promotions?sslmode=disable
+PROMOTION_RELEVANCE_THRESHOLD=0.30
+PROMOTION_ANSWER_MODEL=openai/gpt-oss-120b
+USE_GUARD=true
+```
+
+Set `USE_GUARD=false` to bypass Prompt Guard. The Prompt Guard model is
+downloaded from Hugging Face and may require `HF_TOKEN`.
+
+## LangGraph Studio
+
+The graph configured in `langgraph.json` points to `middleware.py:agent`.
+Start the local Studio server with:
+
+```bash
+uv run langgraph dev
+```
+
+This command launches the local API and opens the LangGraph Studio UI in your
+browser. To prevent automatic browser launch and open the printed Studio URL
+manually, use:
+
+```bash
+uv run langgraph dev --no-browser
+```
+
+There is no separate `langgraph ui` command in the current CLI. Use a valid LangSmith key for
+tracing, or disable tracing in `.env`:
+
+```env
+LANGSMITH_TRACING=false
+```
 
 ## Job application email workflow
 
