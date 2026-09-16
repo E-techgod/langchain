@@ -13,6 +13,12 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+.langgraph_api/
+
+# Local model caches
+.cache/
+hf_cache/
+transformers_cache/
 
 # Generated promotion inputs, state, and results
 /promos/
