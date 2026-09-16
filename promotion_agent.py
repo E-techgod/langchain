@@ -26,6 +26,7 @@ RESULTS_FILE = BASE_DIR / "promotion_results.json"
 PROMOTION_NAMESPACE = ("promotions",)
 EMBEDDING_DIMENSIONS = 768
 GUARD_MODEL_ID = "meta-llama/Prompt-Guard-86M"
+INJECTION_BLOCK_THRESHOLD = 0.95
 
 
 class PromotionMemory(Promotion):
@@ -296,8 +297,11 @@ def main() -> None:
             if guard_enabled:
                 guard_label, guard_score = check_prompt_injection(question)
                 print(f"Prompt Guard: {guard_label} ({guard_score:.3f})")
-                if guard_label in {"INJECTION", "JAILBREAK"}:
-                    print("Agent: I cannot process that prompt.")
+                if guard_label == "JAILBREAK" or (
+                    guard_label == "INJECTION"
+                    and guard_score > INJECTION_BLOCK_THRESHOLD
+                ):
+                    print("Agent: I cannot answer this based on the available information.")
                     continue
             else:
                 print("Prompt Guard: skipped")
