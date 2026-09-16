@@ -39,10 +39,13 @@ agent = create_agent(
     middleware = [HooksDemo()]
 )
 
+# Prints the Mermaid markup code
+# print(agent.get_graph().draw_mermaid())
+
 response = agent.invoke({
     'messages' : [
         SystemMessage("You are a helpful assistant."),
-        HumanMessage("What is RPA") #RPA
+        HumanMessage("What is RPA?") 
     ]
 })
 
