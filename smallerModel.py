@@ -1,10 +1,10 @@
-from llm import GROQ_LLM, GEMINI_LLM
+from llm import groq_llm, gemini_llm
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelRequest, ModelResponse, wrap_model_call
-from langchain.messages import AIMessage, HumanMessage, SystemMessage
+from langchain.messages import HumanMessage, SystemMessage
 
-basic_model = GEMINI_LLM
-advanced_model = GROQ_LLM
+basic_model = gemini_llm
+advanced_model = groq_llm
 
 @wrap_model_call
 def dynamic_model_selection(request: ModelRequest, handler) -> ModelResponse:
