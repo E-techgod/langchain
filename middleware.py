@@ -1,9 +1,19 @@
+
+import os 
 import time 
+
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_API_KEY"] = "your-langsmith-api-key-here"
+os.environ["LANGSMITH_PROJECT"] = "HooksDemo-Visualization"
+
 from llm import llm 
+from dotenv import load_dotenv
 from dataclasses import dataclass
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelRequest, ModelResponse, wrap_model_call, AgentMiddleware, AgentState
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
+
+load_dotenv(override=True)
 
 class HooksDemo(AgentMiddleware): 
 
@@ -32,7 +42,7 @@ agent = create_agent(
 response = agent.invoke({
     'messages' : [
         SystemMessage("You are a helpful assistant."),
-        HumanMessage("What is RPA?")
+        HumanMessage("What is RPA") #RPA
     ]
 })
 
